@@ -1,0 +1,6 @@
+# Ignore Python cache files and environment files
+token.json
+credentials.json
+__pycache__/
+.vscode/
+.env
