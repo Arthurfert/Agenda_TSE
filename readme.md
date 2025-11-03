@@ -57,7 +57,7 @@ pip install -r requirements.txt
 
 ### Étape 3 : Configurer vos informations de connexion
 
-Modifiez le fichier [`information_connexion.js`](information_connexion.js) avec vos données :
+Modifiez le fichier [`information_connexion.py`](information_connexion.py) avec vos données :
 
 ```python
 CONFIG = {
@@ -109,7 +109,7 @@ python emploi-du-temps-tse.py --couleur-td=2 --couleur-cm=3 --couleur-tp=4
 - `3`  : Raisin
 - `4`  : Flamant
 - `5`  : Banane
-- `6`  : Mandarine
+- `6`  : Mandarine (défaut évaluation TD)
 - `7`  : Paon
 - `8`  : Graphite (défaut autres)
 - `9`  : Myrtille
@@ -135,7 +135,7 @@ python emploi-du-temps-tse.py --couleur-td=2 --couleur-cm=3 --couleur-tp=4
 
 ## 🛡️ Sécurité
 
-- **Ne partagez jamais** vos fichiers `credentials.json`, `token.json` et `information_connexion.js`
+- **Ne partagez jamais** vos fichiers `credentials.json`, `token.json` et `information_connexion.py`
 - Ces fichiers contiennent des informations sensibles (mots de passe, tokens d'accès)
 - Ajoutez-les à votre `.gitignore` si vous versionnez le projet !
 
