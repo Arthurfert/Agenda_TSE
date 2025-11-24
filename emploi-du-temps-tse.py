@@ -238,14 +238,13 @@ class TSESession:
         return date_str
 
 def get_current_school_week():
-    """Obtient la semaine scolaire actuelle"""
+    """Obtient la semaine scolaire actuelle (Format ISO)"""
     now = datetime.now()
-    # Calcul simple du numéro de semaine
-    start_of_year = datetime(now.year, 1, 1)
-    days_since_start = (now - start_of_year).days
-    week_number = (days_since_start // 7) + 1
+    # Utilisation du calendrier ISO pour être précis
+    # isocalendar() retourne un tuple (année, semaine, jour)
+    iso_cal = now.isocalendar()
     
-    return {'week': week_number, 'year': now.year}
+    return {'week': iso_cal[1], 'year': iso_cal[0]}
 
 def get_next_school_weeks(current_week, count):
     """Obtient les prochaines semaines scolaires"""
@@ -489,6 +488,11 @@ def main():
         current_week = get_current_school_week()
         weeks = get_next_school_weeks(current_week, 11)
         
+        # Calculer la date limite (Lundi de la semaine actuelle à 00h00)
+        today = datetime.now()
+        start_of_current_week = today - timedelta(days=today.weekday())
+        start_of_current_week = start_of_current_week.replace(hour=0, minute=0, second=0, microsecond=0)
+        
         # Traitement de chaque semaine
         for week_info in weeks:
             week_num = week_info['week']
@@ -503,6 +507,15 @@ def main():
                 jours = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche']
                 for jour in jours:
                     for cours in agenda[jour]:
+                        # Vérification de la date pour éviter les doublons passés
+                        try:
+                            cours_date = datetime.strptime(cours['date'], '%Y-%m-%d')
+                            if cours_date < start_of_current_week:
+                                # On ignore silencieusement les cours antérieurs au début du nettoyage
+                                continue
+                        except ValueError:
+                            pass
+
                         # Filtrage des cours
                         if cours['titre'] == 'LV2' or (not args.tier_temps and '1/3 temps' in cours['titre'].lower()):
                             logger.info(f"Ignoré: {cours['titre']}")
