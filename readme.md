@@ -1,8 +1,8 @@
 # Synchronisation Emploi du Temps TSE → Google Calendar
 
-Ce projet permet de synchroniser automatiquement votre emploi du temps de Télécom Saint-Étienne avec votre calendrier Google.
+Ce projet permet de synchroniser automatiquement votre emploi du temps de Télécom Saint-Étienne avec votre calendrier Google. **Compatible nouvel intranet**
 
-## 🚀 Fonctionnalités
+## Fonctionnalités
 
 - **Synchronisation automatique** : Récupère l'emploi du temps des 11 prochaines semaines
 - **Nettoyage intelligent** : Supprime les anciens événements avant d'ajouter les nouveaux
@@ -10,17 +10,15 @@ Ce projet permet de synchroniser automatiquement votre emploi du temps de Télé
 - **Détection automatique** : Reconnaissance des salles, enseignants et évaluations
 - **Options configurables** : Inclure ou exclure certains types de cours
 
-## 📋 Prérequis
+## Prérequis
 
 - Python & pip
 - Un compte Google
 - Vos identifiants TSE
 
-## 🛠️ Installation
+## Installation
 
 1. **Téléchargez ce projet**
-
-(Normalement si vous lisez ceci c'est déjà fait)
 
 2. **Installez les dépendances**
 
@@ -30,7 +28,7 @@ Ce projet permet de synchroniser automatiquement votre emploi du temps de Télé
 pip install -r requirements.txt
 ```
 
-## 🔐 Configuration des credentials Google
+## Configuration des credentials Google
 
 ### Étape 1 : Créer un projet Google Cloud
 
@@ -68,7 +66,7 @@ CONFIG = {
     'calendar_id': "IDduCalendrier"}
 ```
 
-### 📅 Utilisation avec un calendrier spécifique (RECOMMANDÉ)
+### Utilisation avec un calendrier spécifique (RECOMMANDÉ)
 
 Pour utiliser un calendrier Google spécifique plutôt que le calendrier principal :
 
@@ -86,7 +84,7 @@ CONFIG = {
 
 > Utilisez votre calendrier principal va supprimer les autres événements.
 
-## 🎯 Utilisation
+## Utilisation
 
 ### Synchronisation simple
 ```bash
@@ -124,7 +122,7 @@ python emploi-du-temps-tse.py --couleur-td=2 --couleur-cm=3 --couleur-tp=4
 - `--couleur-tp` : Couleur des TP (défaut: 5)
 - `--couleur-autre` : Couleur pour les autres cours (défaut: 8)
 
-## 🔄 Automatisation
+## Automatisation
 
 ### Sous Windows (Planificateur de tâches)
 1. Ouvrez le Planificateur de tâches
@@ -133,13 +131,13 @@ python emploi-du-temps-tse.py --couleur-td=2 --couleur-cm=3 --couleur-tp=4
 4. Action : Démarrer un programme
    Insérer le fichier [`.bat disponible`](Sync_TSE_Agenda.bat)
 
-## 🛡️ Sécurité
+## Sécurité
 
 - **Ne partagez jamais** vos fichiers `credentials.json`, `token.json` et `information_connexion.py`
 - Ces fichiers contiennent des informations sensibles (mots de passe, tokens d'accès)
 - Ajoutez-les à votre `.gitignore` si vous versionnez le projet !
 
-## 🐛 Résolution des problèmes
+## Résolution des problèmes
 
 ### Erreur d'authentification Google
 1. Supprimez le fichier `token.json`
@@ -154,7 +152,7 @@ python emploi-du-temps-tse.py --couleur-td=2 --couleur-cm=3 --couleur-tp=4
 - Vérifiez que l'API Google Calendar est bien activée
 - Vérifiez les permissions de votre calendrier
 
-## 📝 Structure des fichiers
+## Structure des fichiers
 
 ```
 .
@@ -169,11 +167,11 @@ python emploi-du-temps-tse.py --couleur-td=2 --couleur-cm=3 --couleur-tp=4
 └── README.md                 # Ce fichier
 ```
 
-## 🤝 Contribution
+## Contribution
 
 Les contributions sont les bienvenues !
 
-## 🧑‍💻 Auteurs
+## Auteurs
 
 Ce projet à été quasiment entièrement codé par **Aubin Sionville** en javascript.
 Je (*Arthur Fert*) n'ai ajouté que le readme pour plus d'accessibilité, fais quelques légères modifications de détection des salles/partiels,et effectué le portage sur python.
