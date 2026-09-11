@@ -1,6 +1,10 @@
 # Ignore Python cache files and environment files
 token.json
 credentials.json
+.edith_cookies.json
 __pycache__/
 .vscode/
 .env
+# information_connexion.py contient vos identifiants TSE et secret 2FA — ne pas committer
+# Décommentez la ligne suivante si vous souhaitez l'ignorer (puis `git rm --cached information_connexion.py`)
+# information_connexion.py
