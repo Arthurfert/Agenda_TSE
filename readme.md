@@ -167,11 +167,6 @@ python emploi-du-temps-tse.py --couleur-td=2 --couleur-cm=3 --couleur-tp=4
 └── README.md                 # Ce fichier
 ```
 
-## Contribution
+## Auteur
 
-Les contributions sont les bienvenues !
-
-## Auteurs
-
-Ce projet à été quasiment entièrement codé par **Aubin Sionville** en javascript.
-Je (*Arthur Fert*) n'ai ajouté que le readme pour plus d'accessibilité, fais quelques légères modifications de détection des salles/partiels,et effectué le portage sur python.
+**Arthur FERT - Promo 2027**
