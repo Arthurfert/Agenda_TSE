@@ -616,37 +616,109 @@ class TSESession:
                 titre_raw = title_p.get_text(strip=True) if title_p else ''
                 titre = self.clean_titre(titre_raw)
 
-                # Bloc flexible avec teacher/salle/heure
+                # Bloc flexible avec teacher/salle/heure.
+                # L'ordre des <p> n'est pas garanti (titre / enseignant / salle / heure
+                # peuvent être absents ou permutés) -> on classe par contenu, jamais par position.
+                def _is_label_only(txt):
+                    # "Salle(s)", "Salle(s) :", "Enseignant(s) :", "Enseignants :" ...
+                    return bool(re.match(r'^\s*(salles?|enseignants?)(\(s\))?\s*:?\s*$', txt, re.I))
+
+                def _looks_like_room(txt):
+                    t = txt.strip()
+                    if not t or _is_label_only(t):
+                        return False
+                    if re.search(r'\d{1,2}:\d{2}', t):
+                        return False
+                    # Marqueurs explicites de salles EDITH
+                    if re.search(r'(?i)\b(amphi|td|tp|info|salle|room|reseau|exterieur|newsplex|visio|fst)\b|amphi_|td_|tp\s|info_|fst_', t):
+                        return True
+                    if '_' in t and re.match(r'^[A-Z0-9_ \-]+$', t):
+                        return True
+                    if re.match(r'^[A-Z]\d{3}$', t):  # J021, A101...
+                        return True
+                    return False
+
+                def _looks_like_teacher(txt):
+                    t = txt.strip()
+                    if not t or _is_label_only(t):
+                        return False
+                    if re.search(r'\d{1,2}:\d{2}', t):
+                        return False
+                    if _looks_like_room(t):
+                        return False
+                    if 'groupe' in t.lower():
+                        return False
+                    # Nom de personne: lettres/espaces/tirets/apostrophes, au moins un espace ou 3+ lettres
+                    if not re.fullmatch(r"[A-Za-zÀ-ÖØ-öø-ÿ'’\- ]+", t):
+                        return False
+                    return ' ' in t.strip() or len(t.strip()) >= 3
+
                 flex_div = cours.find('div', class_=lambda c: c and 'flex' in c and 'flex-col' in c)
                 ps = flex_div.find_all('p') if flex_div else cours.find_all('p')
-                # ps[0]=titre, ps[1]=teacher, ps[2]=salle, ps[3]=heure
                 enseignant = ''
                 salle_raw = ''
                 time_raw = ''
                 if flex_div and len(ps) >= 2:
-                    # Filtrer les p vides
                     texts = [p.get_text(strip=True) for p in ps]
-                    # texts[0]=titre, texts[1]=teacher, texts[2]=salle, texts[3]=time
-                    if len(texts) > 1 and texts[1]:
-                        enseignant = texts[1]
-                    if len(texts) > 2 and texts[2]:
-                        salle_raw = texts[2]
-                    if len(texts) > 3 and texts[3]:
-                        time_raw = texts[3]
-                # Fallback via template tooltip pour salle/enseignant/type
+                    # texts[0] = titre -> ignoré, on classe le reste par contenu
+                    for txt in texts[1:]:
+                        if not txt or _is_label_only(txt):
+                            continue
+                        m_time = re.search(r'\d{1,2}:\d{2}\s*[—–-]\s*\d{1,2}:\d{2}', txt)
+                        if m_time:
+                            if not time_raw:
+                                time_raw = m_time.group(0)
+                            continue
+                        if _looks_like_room(txt):
+                            if not salle_raw:
+                                salle_raw = txt
+                            continue
+                        if _looks_like_teacher(txt):
+                            if not enseignant:
+                                enseignant = txt
+                            continue
+                # Template tooltip (source de vérité): labels ancrés en début de ligne pour
+                # éviter toute confusion Salle <-> Enseignant. Gère "Label : valeur" inline
+                # et label seul suivi de la valeur au <p> suivant.
                 tmpl = cours.find('template')
                 tmpl_soup = None
                 if tmpl:
                     tmpl_soup = BeautifulSoup(tmpl.decode_contents(), 'html.parser')
-                    # Enseignant depuis "Enseignant : ..."
-                    for p in tmpl_soup.find_all('p'):
+                    tmpl_ps = tmpl_soup.find_all('p')
+                    for idx, p in enumerate(tmpl_ps):
                         txt = p.get_text(strip=True)
-                        if txt.startswith('Enseignant'):
-                            enseignant = txt.split(':', 1)[-1].strip()
-                        elif txt.startswith('Salle'):
-                            salle_raw = txt.split('Salle', 1)[-1].strip().lstrip(':').strip()
+                        m_ens = re.match(r'^\s*enseignants?(\(s\))?\s*:?\s*(.*)$', txt, re.I)
+                        m_sal = re.match(r'^\s*salles?(\(s\))?\s*:?\s*(.*)$', txt, re.I)
+                        if m_ens and (m_ens.group(2).strip() or re.search(r':', txt)):
+                            val = m_ens.group(2).strip()
+                            val = re.sub(r'^\(s\)\s*:?\s*', '', val, flags=re.I).strip()
+                            if not val:
+                                # Valeur probablement au <p> suivant (ex: <p>Enseignant(s) :</p><p>DUPONT</p>)
+                                if idx + 1 < len(tmpl_ps):
+                                    nxt = tmpl_ps[idx + 1].get_text(strip=True)
+                                    if nxt and not _is_label_only(nxt) and 'groupe' not in nxt.lower() and not re.search(r'\d{1,2}:\d{2}', nxt) and _looks_like_teacher(nxt):
+                                        val = nxt
+                            if val and _looks_like_teacher(val):
+                                enseignant = val
+                        elif m_sal and (m_sal.group(2).strip() or re.search(r':', txt)):
+                            val = m_sal.group(2).strip()
+                            val = re.sub(r'^\(s\)\s*:?\s*', '', val, flags=re.I).strip()
+                            if not val:
+                                if idx + 1 < len(tmpl_ps):
+                                    nxt = tmpl_ps[idx + 1].get_text(strip=True)
+                                    # Le <p> suivant est la salle sauf si c'est un autre label
+                                    if nxt and not _is_label_only(nxt) and 'groupe' not in nxt.lower() and 'enseignant' not in nxt.lower() and not re.search(r'\d{1,2}:\d{2}', nxt):
+                                        val = nxt
+                            if val:
+                                salle_raw = val
                         elif re.search(r'\d{1,2}:\d{2}\s*[—–-]\s*\d{1,2}:\d{2}', txt):
                             time_raw = re.search(r'\d{1,2}:\d{2}\s*[—–-]\s*\d{1,2}:\d{2}', txt).group(0)
+
+                # Garde-fou final: l'enseignant ne doit jamais être une salle
+                if enseignant and salle_raw and enseignant.strip() == salle_raw.strip():
+                    enseignant = ''
+                if enseignant and _looks_like_room(enseignant) and not _looks_like_teacher(enseignant):
+                    enseignant = ''
 
                 # Type depuis badge dans template
                 type_cours = 'Autre'
@@ -673,6 +745,15 @@ class TSESession:
                         fin = self.parse_heure(parts[1].strip())
 
                 # Salle nettoyée: essayer extract_salle puis fallback intelligent pour EDITH
+                # Nettoie d'abord les résidus de pluriel "(s)", "(s) :", ":" seul
+                if salle_raw:
+                    salle_raw = re.sub(r'^\(s\)\s*:?\s*', '', salle_raw.strip(), flags=re.I).strip()
+                    salle_raw = re.sub(r'^\(es\)\s*:?\s*', '', salle_raw.strip(), flags=re.I).strip()
+                    if salle_raw in [':', '(s)', '(s) :', '']:
+                        salle_raw = ''
+                # Garde-fou: si salle_raw n'est qu'un résidu de label, l'ignorer
+                if salle_raw and re.fullmatch(r'\(s\)\s*:?', salle_raw.strip(), flags=re.I):
+                    salle_raw = ''
                 salle = self.extract_salle(salle_raw) if salle_raw else 'Non spécifiée'
                 if salle == 'Non spécifiée' and salle_raw:
                     # Nettoyer préfixes EDITH: "TP RESEAU_J202" -> "RESEAU_J202", "TD_A101" -> "A101"
