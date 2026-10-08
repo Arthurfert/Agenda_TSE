@@ -914,17 +914,21 @@ def get_current_school_week():
     return {'week': iso_cal[1], 'year': iso_cal[0]}
 
 def get_next_school_weeks(current_week, count):
-    """Obtient les prochaines semaines scolaires"""
+    """Obtient les prochaines semaines scolaires (semaine actuelle + futures uniquement).
+
+    Calculé par arithmétique de dates (lundi + 7j) plutôt que week+1, pour gérer
+    correctement le passage d'année et les années ISO à 53 semaines (ex: 2026):
+    l'ancien code plafonnait à 52 et pouvait demander une semaine inexistante
+    ou décalée, dont les cours mal datés échappaient ensuite au filtre anti-passé.
+    """
     weeks = []
-    week = current_week['week']
-    year = current_week['year']
+    today = datetime.now()
+    monday = today - timedelta(days=today.weekday())
 
     for i in range(count):
-        weeks.append({'week': week, 'year': year})
-        week += 1
-        if week > 52:
-            week = 1
-            year += 1
+        day = monday + timedelta(days=7 * i)
+        iso_year, iso_week, _ = day.isocalendar()
+        weeks.append({'week': iso_week, 'year': iso_year})
 
     return weeks
 
@@ -973,9 +977,18 @@ def get_color_id(cours, args):
         else:
             return args.couleur_autre
 
-def add_event(service, cours, calendar_id, args):
-    """Ajoute un événement au calendrier Google avec gestion du rate limiting"""
+def tse_cours_id(cours):
+    """Identifiant stable d'un cours, utilisé pour dédupliquer (doit rester inchangé)."""
+    return f"{cours['date']}_{cours['debut']['heure']:02d}{cours['debut']['minutes']:02d}_{cours['titre'].replace(' ', '_')}"
+
+def add_event(service, cours, calendar_id, args, already_present=None):
+    """Ajoute un événement au calendrier Google avec gestion du rate limiting.
+    Si already_present contient le tse_cours_id, l'insertion est ignorée (idempotence)."""
     import time
+
+    if already_present and tse_cours_id(cours) in already_present:
+        logger.debug(f"Événement déjà présent, ignoré: {cours['titre']} {cours['date']}")
+        return
 
     try:
         # Création de la date/heure de début
@@ -1014,7 +1027,7 @@ def add_event(service, cours, calendar_id, args):
             'extendedProperties': {
                 'private': {
                     'origin': f"EDT_TSE_{CONFIG['identifiant_tse']}",
-                    'tse_cours_id': f"{cours['date']}_{cours['debut']['heure']:02d}{cours['debut']['minutes']:02d}_{cours['titre'].replace(' ', '_')}"
+                    'tse_cours_id': tse_cours_id(cours)
                 }
             }
         }
@@ -1049,40 +1062,64 @@ def add_event(service, cours, calendar_id, args):
         logger.error(f"Erreur lors de la création de l'événement {cours['titre']}: {e}")
 
 def clear_calendar(service, calendar_id):
-    """Supprime TOUS les événements de la semaine actuelle et futures avec gestion du rate limiting"""
+    """Supprime TOUS les événements de la semaine actuelle et futures avec gestion du rate limiting.
+
+    Retourne (ok, surviving_ids):
+      - ok=False si la liste initiale a échoué -> l'appelant ne doit PAS ajouter
+        d'événements (sinon chaque run empile des doublons).
+      - surviving_ids = tse_cours_id des événements dont la suppression a échoué.
+        L'ajout les ignorera pour ne pas créer de doublons.
+    """
     import time
 
     try:
-        # Calculer le début de la semaine actuelle (lundi)
-        today = datetime.now()
+        # Calculer le début de la semaine actuelle (lundi), avec le fuseau local.
+        # NB: l'ancien code ajoutait 'Z' (UTC) à une heure locale naive, ce qui
+        # décalait timeMin de +1/+2h et laissait survivre les événements du
+        # lundi matin -> doublons à chaque run pour ces créneaux.
+        today = datetime.now().astimezone()
         days_since_monday = today.weekday()  # 0 = lundi, 6 = dimanche
         start_of_week = today - timedelta(days=days_since_monday)
         start_of_week = start_of_week.replace(hour=0, minute=0, second=0, microsecond=0)
 
         logger.info(f"Suppression des événements à partir du {start_of_week.strftime('%d/%m/%Y')} (début de semaine)...")
 
-        # Récupération de tous les événements à partir du début de la semaine
-        events_result = service.events().list(
-            calendarId=calendar_id,
-            maxResults=2500,
-            timeMin=start_of_week.isoformat() + 'Z',
-            singleEvents=True,
-            orderBy='startTime'
-        ).execute()
-
-        events = events_result.get('items', [])
+        # Récupération de tous les événements à partir du début de la semaine (paginé)
+        events = []
+        page_token = None
+        try:
+            while True:
+                events_result = service.events().list(
+                    calendarId=calendar_id,
+                    maxResults=2500,
+                    timeMin=start_of_week.isoformat(),  # inclut l'offset local (+01:00/+02:00)
+                    singleEvents=True,
+                    orderBy='startTime',
+                    pageToken=page_token
+                ).execute()
+                events.extend(events_result.get('items', []))
+                page_token = events_result.get('nextPageToken')
+                if not page_token:
+                    break
+        except Exception as e:
+            # Sans liste fiable, ajouter ensuite créerait des doublons massifs:
+            # on signale l'échec pour que main() abandonne avant l'ajout.
+            logger.error(f'Erreur lors de la récupération des événements (ajout annulé pour éviter les doublons): {e}')
+            return False, set()
 
         if not events:
             logger.info('Aucun événement à supprimer.')
-            return
+            return True, set()
 
         logger.info(f'Suppression de {len(events)} événements (semaine actuelle et futures)...')
 
         # Suppression de tous les événements avec gestion du rate limiting
         deleted_count = 0
+        surviving_ids = set()
         for i, event in enumerate(events):
             max_retries = 3
             retry_count = 0
+            deleted = False
 
             while retry_count < max_retries:
                 try:
@@ -1091,6 +1128,7 @@ def clear_calendar(service, calendar_id):
                         eventId=event['id']
                     ).execute()
                     deleted_count += 1
+                    deleted = True
                     break  # Succès, sortir de la boucle de retry
 
                 except HttpError as e:
@@ -1106,6 +1144,12 @@ def clear_calendar(service, calendar_id):
                     logger.error(f"Erreur lors de la suppression d'un événement: {e}")
                     break
 
+            if not deleted:
+                # L'événement a survécu: on mémorise son id pour ne pas le ré-ajouter
+                tse_id = event.get('extendedProperties', {}).get('private', {}).get('tse_cours_id')
+                if tse_id:
+                    surviving_ids.add(tse_id)
+
             # Pause entre chaque suppression pour éviter le rate limiting
             if (i + 1) % 5 == 0:  # Pause plus longue toutes les 5 suppressions
                 time.sleep(1)
@@ -1113,13 +1157,17 @@ def clear_calendar(service, calendar_id):
                 time.sleep(0.2)  # Pause courte entre chaque suppression
 
             # Afficher le progrès
-            if deleted_count % 10 == 0:
+            if deleted_count and deleted_count % 10 == 0:
                 logger.info(f'  Supprimé {deleted_count}/{len(events)} événements...')
 
         logger.info(f'Nettoyage terminé. {deleted_count} événements supprimés.')
+        if surviving_ids:
+            logger.warning(f'{len(surviving_ids)} événement(s) n\'ont pas pu être supprimés, ils ne seront pas ré-ajoutés.')
+        return True, surviving_ids
 
     except Exception as e:
-        logger.error(f'Erreur lors du nettoyage: {e}')
+        logger.error(f'Erreur lors du nettoyage (ajout annulé pour éviter les doublons): {e}')
+        return False, set()
 
 def main():
     # Arguments de ligne de commande
@@ -1150,11 +1198,14 @@ def main():
 
         calendar_id = CONFIG.get('calendar_id', 'primary')
 
-        # Nettoyage du calendrier
+        # Nettoyage du calendrier. Si le nettoyage échoue, on ABANDONNE avant
+        # tout ajout: ajouter sans avoir nettoyé empile des doublons à chaque run.
         logger.info("Nettoyage du calendrier...")
-        clear_calendar(service, calendar_id)
+        clear_ok, surviving_ids = clear_calendar(service, calendar_id)
+        if not clear_ok:
+            raise Exception("Nettoyage du calendrier impossible, synchronisation annulée (aucun événement ajouté).")
 
-        # Récupération des semaines à traiter
+        # Récupération des semaines à traiter (actuelle + futures uniquement)
         current_week = get_current_school_week()
         weeks = get_next_school_weeks(current_week, 11)
 
@@ -1177,21 +1228,24 @@ def main():
                 jours = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche']
                 for jour in jours:
                     for cours in agenda[jour]:
-                        # Vérification de la date pour éviter les doublons passés
+                        # Ne jamais (ré)ajouter un cours antérieur au lundi actuel:
+                        # le nettoyage ne couvre que [lundi, +infini[, donc un cours
+                        # passé ré-ajouté ne serait jamais nettoyé -> doublon à chaque run.
                         try:
                             cours_date = datetime.strptime(cours['date'], '%Y-%m-%d')
-                            if cours_date < start_of_current_week:
-                                # On ignore silencieusement les cours antérieurs au début du nettoyage
-                                continue
-                        except ValueError:
-                            pass
+                        except (ValueError, TypeError, KeyError):
+                            logger.warning(f"Cours ignoré (date invalide: {cours.get('date')!r}): {cours.get('titre')}")
+                            continue
+                        if cours_date < start_of_current_week:
+                            # On ignore silencieusement les cours antérieurs au début du nettoyage
+                            continue
 
                         # Filtrage des cours
                         if cours['titre'] == 'LV2' or (not args.tier_temps and '1/3 temps' in cours['titre'].lower()):
                             logger.info(f"Ignoré: {cours['titre']}")
                             continue
 
-                        add_event(service, cours, calendar_id, args)
+                        add_event(service, cours, calendar_id, args, already_present=surviving_ids)
 
                 # Pause plus longue entre les semaines
                 import time
