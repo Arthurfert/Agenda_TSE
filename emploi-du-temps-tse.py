@@ -487,8 +487,8 @@ class TSESession:
                 titre = cours.get_text().strip().split('\n')[0] if cours.get_text() else ''
                 cours_text = cours.get_text()
 
-                # Détection évaluation
-                evaluation = 'evaluation' in cours_text.lower()
+                # Détection évaluation (insensible aux accents: "Évaluation" vs "Evaluation")
+                evaluation = self.is_evaluation(cours_text)
 
                 # Détection salle
                 salle = self.extract_salle(cours_text)
@@ -774,12 +774,22 @@ class TSESession:
                         else:
                             salle = cleaned
 
-                # Evaluation: badge rouge ou titre contient evaluation
-                evaluation = False
-                if tmpl_soup:
-                    txt_low = tmpl_soup.get_text().lower()
-                    evaluation = 'evaluation' in txt_low or 'examen' in txt_low
-                if 'evaluation' in titre_raw.lower() or 'examen' in titre_raw.lower():
+                # Evaluation: badge "Évaluation"/"Examen"/"Partiel", marqueur visuel
+                # rouge (parité ancien intranet: btn-danger), ou titre "... - EVALUATION".
+                # Insensible aux accents car EDITH écrit "Évaluation".
+                evaluation = self.is_evaluation(titre_raw)
+                if not evaluation and tmpl_soup:
+                    evaluation = self.is_evaluation(tmpl_soup.get_text())
+                if not evaluation:
+                    # Marqueur visuel rouge dans les classes (badge, bordure, fond)
+                    class_tokens = set()
+                    for tag in [cours] + (tmpl_soup.find_all(True) if tmpl_soup else []):
+                        for cls in (tag.get('class') or []):
+                            class_tokens.update(re.split(r'[-_\s]+', cls.lower()))
+                    if class_tokens & {'danger', 'btn-danger', 'red', 'rouge', 'eval', 'evaluation', 'examen'}:
+                        evaluation = True
+                if not evaluation and salle_raw and 'J021' in salle_raw and 'J022' in salle_raw:
+                    # Parité ancien script: double salle J021+J022 = évaluation
                     evaluation = True
 
                 cours_data = {
@@ -798,6 +808,17 @@ class TSESession:
                 continue
 
         return agenda
+
+    @staticmethod
+    def strip_accents(s):
+        """Retire les accents pour comparer 'Évaluation' et 'Evaluation'."""
+        import unicodedata
+        return ''.join(c for c in unicodedata.normalize('NFKD', s or '') if not unicodedata.combining(c))
+
+    def is_evaluation(self, text):
+        """Détecte une évaluation/examen/partiel/rattrapage, insensible aux accents/casse."""
+        norm = self.strip_accents(text).lower()
+        return bool(re.search(r'evaluation|examen|partiel|rattrapage', norm))
 
     def extract_salle(self, cours_text):
         """Extrait la salle du texte du cours"""
@@ -973,9 +994,10 @@ def get_color_id(cours, args):
         elif type_cours == 'TD':
             return args.couleur_td_eval if evaluation else args.couleur_td
         elif type_cours == 'TP':
-            return args.couleur_tp
+            return args.couleur_tp_eval if evaluation else args.couleur_tp
         else:
-            return args.couleur_autre
+            # Un examen typé "Autre" doit quand même ressortir en rouge
+            return args.couleur_cm_eval if evaluation else args.couleur_autre
 
 def tse_cours_id(cours):
     """Identifiant stable d'un cours, utilisé pour dédupliquer (doit rester inchangé)."""
@@ -1178,6 +1200,7 @@ def main():
     parser.add_argument('--couleur-cm', default='10', help='Couleur des CM (défaut: 10)')
     parser.add_argument('--couleur-cm-eval', default='11', help='Couleur des évaluations CM (défaut: 11)')
     parser.add_argument('--couleur-tp', default='5', help='Couleur des TP (défaut: 5)')
+    parser.add_argument('--couleur-tp-eval', default='11', help='Couleur des évaluations TP (défaut: 11)')
     parser.add_argument('--couleur-autre', default='8', help='Couleur pour les autres cours (défaut: 8)')
     parser.add_argument('--totp-code', default=None, help='Code 2FA à 6 chiffres (sinon utilise totp_secret du fichier config)')
     parser.add_argument('--base-url', default=None, help='URL de base intranet (défaut: https://intranet.telecomste.fr)')
